@@ -1,9 +1,9 @@
 ------------
-##### Copyright (c) 2004-2018 Dan Andrei STEFAN (danandrei.stefan@gmail.com)
+##### Copyright (c) 2004-2023 Dan Andrei STEFAN (danandrei.stefan@gmail.com)
 ------------
 - Author	 	: Andrei STEFAN
 - Module	 	: dbaTDPMon (Troubleshoot Database Performance / Monitoring)
-- Description	: SQL Server 2000-2017 maintenance, checks and monitoring
+- Description	: SQL Server 2000-2022 maintenance, checks and monitoring
 ------------
 
 #### Initial Release
@@ -1064,3 +1064,36 @@
 * health-check: collect database backup information taken with other tools then dbaTDPMon (enhance Backup Size details in the HTML report)
 * health-check: fixed minor bugs on data collection
 * release of dbaTDPMon - v2022.02
+
+------------
+#### May 2023 new features & fixes
+10.05.2023
+* maintenance: add support for remote maintenance of system databases
+
+15.05.2023
+* maintenance: fixed issues related to alerts when running remote maintenance against a read-only secondary replica
+
+26.07.2023
+* health-check: collect database file(s) growth events from default trace files into [health-check].[statsDatabaseGrowth]
+
+------------
+#### September 2023 new features & fixes
+16.09.2023
+* maintenance-plan: add support for columnstore indexes maintenance (pending on deleted records and deleted segments "fragmentation")
+
+19.09.2023
+* maintenance-plan: fix issue related to rebuilding a compressed index which led to removing the data compression option
+* maintenance-plan: fix issue related to rebuilding dependent indexes for a primary key - non-clustered indexes were rebuilt twice
+* maintenance-plan: fix issue related to running dbcc checktable with (data_purity) even that is was not needed (run only when dbi_dbccFlags=0)
+
+24.09.2023
+* maintenance-plan: fix issue related to online index rebuild (in some scenarios offline mode was forced)
+
+------------
+#### October 2023 new features & fixes
+14.10.2023
+* change (un)install and update from batch files to using a single powershell script
+
+18.10.2023
+* health-check: fixed isues when running on linux 
+* release of dbaTDPMon - v2023.10

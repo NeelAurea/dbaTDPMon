@@ -1,24 +1,15 @@
--- ============================================================================
--- Copyright (c) 2004-2019 Dan Andrei STEFAN (danandrei.stefan@gmail.com)
--- ============================================================================
--- Author			 : Dan Andrei STEFAN
--- Create date		 : 06.09.2019
--------------------------------------------------------------------------------
--- Change date		 : 
--- Description		 : 
--------------------------------------------------------------------------------
-RAISERROR('Create job: $(dbName) - Database Maintenance - DBCC CHECKDB - Parallel', 10, 1) WITH NOWAIT
+USE [msdb]
 GO
+RAISERROR('Create job: Database Maintenance - System DBs', 10, 1) WITH NOWAIT
 
 DECLARE   @job_name			[sysname]
 		, @logFileLocation	[nvarchar](512)
 		, @queryToRun		[nvarchar](4000)
-		, @queryToRun1		[varchar](8000)
-		, @queryToRun2		[varchar](8000)
+		, @stepName			[sysname]
 		, @queryParameters	[nvarchar](512)
 		, @databaseName		[sysname]
-		, @jobEnabled		[tinyint]
-
+		, @sqlServerName	[sysname]
+SET @sqlServerName = @@SERVERNAME
 ------------------------------------------------------------------------------------------------------------------------------------------
 --get default folder for SQL Agent jobs
 SELECT	@logFileLocation = [value]
@@ -39,82 +30,93 @@ IF RIGHT(@logFileLocation, 1)<>'\' SET @logFileLocation = @logFileLocation + '\'
 /* setting the job name & job log location */
 ---------------------------------------------------------------------------------------------------
 SET @databaseName = N'$(dbName)'
-SET @job_name = @databaseName + N' - Database Maintenance - DBCC CHECKDB - Parallel'
+SET @job_name = @databaseName + N' - Database Maintenance - System DBs - ' + @sqlServerName
 SET @logFileLocation = @logFileLocation + N'job-' + @job_name + N'.log'
 SET @logFileLocation = [$(dbName)].[dbo].[ufn_formatPlatformSpecificPath](@@SERVERNAME, @logFileLocation)
+IF CAST(SERVERPROPERTY('EngineEdition') AS [int]) IN (5, 6, 8) SET @logFileLocation = NULL
 
 ---------------------------------------------------------------------------------------------------
-/* dropping job if exists */
+/* will not drop/recreate the job if it exists */
 ---------------------------------------------------------------------------------------------------
 IF  EXISTS (SELECT job_id FROM msdb.dbo.sysjobs_view WHERE name = @job_name)
-	EXEC msdb.dbo.sp_delete_job @job_name=@job_name, @delete_unused_schedule=1		
+	GOTO EndSave;
+	--EXEC msdb.dbo.sp_delete_job @job_name=@job_name, @delete_unused_schedule=1		
 
----------------------------------------------------------------------------------------------------
-/* creating the job */
----------------------------------------------------------------------------------------------------
 BEGIN TRANSACTION
-
 	DECLARE @ReturnCode INT
 	SELECT @ReturnCode = 0
+
 	IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'Database Maintenance' AND category_class=1)
 	BEGIN
-		EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB',
-													@type=N'LOCAL', 
-													@name=N'Database Maintenance'
+		EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'Database Maintenance'
 		IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 	END
 
 	---------------------------------------------------------------------------------------------------
-	SET @jobEnabled = 0
-
 	DECLARE @jobId BINARY(16)
 	EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=@job_name, 
-											@enabled=@jobEnabled, 
+											@enabled=1, 
 											@notify_level_eventlog=0, 
 											@notify_level_email=0, 
 											@notify_level_netsend=0, 
 											@notify_level_page=0, 
 											@delete_level=0, 
-											@description=N'Custom Maintenance Plan for Database Backup
-https://github.com/rentadba/dbaTDPMon', 
+											@description=N'Custom Maintenance Plan for System Databases
+https://github.com/rentadba/$(dbName)',
 											@category_name=N'Database Maintenance', 
 											@owner_login_name=N'sa', 
 											@job_id = @jobId OUTPUT
 	IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
-	
+
+
 	---------------------------------------------------------------------------------------------------
-	SET @queryToRun=N'EXEC [dbo].[usp_runDatabaseCheckDBForAllSkippedWithinLastXDays]	
-								@sqlServerNameFilter	= ''%'',
-								@dbccCheckDBAgeDays		= 7,
-								@maxDOP					= 1,
-								@waitForDelay			= ''00:00:05'',
-								@parallelJobs			= 2,
-								@maxRunningTimeInMinutes= 360,
-								@skipObjectsList		= NULL,
-								@executeProjectBased	= 0,
-								@onlyForProduction		= 1,
-								@debugMode				= 0'
+	SET @queryToRun = N'exec $(dbName).[dbo].[usp_mpDoSystemMaintenance] @sqlServerName = ''' + @sqlServerName + ''', @doAllSteps = 0'
 
 	EXEC @ReturnCode = msdb.dbo.sp_add_jobstep	@job_id=@jobId, 
-												@step_name=N'Run', 
+												@step_name=N'System Maintenance', 
 												@step_id=1, 
 												@cmdexec_success_code=0, 
-												@on_success_action=1, 
+												@on_success_action=3, 
 												@on_success_step_id=0, 
 												@on_fail_action=2, 
 												@on_fail_step_id=0, 
-												@retry_attempts=0,
-												@retry_interval=0, 
+												@retry_attempts=0, 
+												@retry_interval=1, 
 												@os_run_priority=0, 
 												@subsystem=N'TSQL', 
 												@command=@queryToRun, 
-												@database_name=@databaseName, 
+												@database_name='$(dbName)', 
 												@output_file_name=@logFileLocation, 
 												@flags=4
 	IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 
 	---------------------------------------------------------------------------------------------------
-	EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+	SET @queryToRun=N'
+EXEC [dbo].[usp_sqlAgentJobEmailStatusReport]	@jobName		=''' + @job_name + ''',
+										@logFileLocation='+ + CASE WHEN CAST(SERVERPROPERTY('EngineEdition') AS [int]) NOT IN (5, 6, 8) THEN '''' + @logFileLocation + '''' ELSE 'null' END + ',
+										@module			=''maintenance-plan'',
+										@sendLogAsAttachment = 1,
+										@eventType		= 2'
+	EXEC @ReturnCode = msdb.dbo.sp_add_jobstep	@job_id=@jobId, 
+												@step_name=N'Send email', 
+												@step_id=2, 
+												@cmdexec_success_code=0, 
+												@on_success_action=1, 
+												@on_success_step_id=0, 
+												@on_fail_action=2, 
+												@on_fail_step_id=0, 
+												@retry_attempts=0, 
+												@retry_interval=0, 
+												@os_run_priority=0, 
+												@subsystem=N'TSQL', 
+												@command=@queryToRun, 
+												@database_name=@databaseName, 
+												@flags=0
+	IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+	---------------------------------------------------------------------------------------------------
+	EXEC @ReturnCode = msdb.dbo.sp_update_job	@job_id = @jobId, 
+												@start_step_id = 1
 	IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 
 	---------------------------------------------------------------------------------------------------
@@ -134,7 +136,6 @@ https://github.com/rentadba/dbaTDPMon',
 													@active_end_date=99991231, 
 													@active_start_time=000000, 
 													@active_end_time=235959
-
 	IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 
 	---------------------------------------------------------------------------------------------------
@@ -151,3 +152,4 @@ EndSave:
 
 ---------------------------------------------------------------------------------------------------
 GO
+

@@ -11,7 +11,7 @@ GO
 CREATE PROCEDURE [dbo].[usp_mpJobSQLAgentCreate]
 		@jobName				[sysname],
 		@projectCode			[varchar](32)=NULL,
-		@sqlServerNameFilter	[sysname]=@@SERVERNAME,
+		@sqlServerNameFilter	[sysname]='%',
 		@jobDescriptorList		[varchar](256)='%',		/*	dbo.usp_mpDatabaseConsistencyCheck
 															dbo.usp_mpDatabaseOptimize
 															dbo.usp_mpDatabaseShrink
@@ -100,10 +100,10 @@ SET @logFileLocation = [dbo].[ufn_formatPlatformSpecificPath](@@SERVERNAME, @log
 IF CAST(SERVERPROPERTY('EngineEdition') AS [int]) IN (5, 6, 8) SET @logFileLocation = NULL
 
 ---------------------------------------------------------------------------------------------------
-/* dropping job if exists */
+/* will not drop/recreate the job if it exists */
 ---------------------------------------------------------------------------------------------------
 IF  EXISTS (SELECT job_id FROM msdb.dbo.sysjobs_view WHERE name = @jobName)
-	EXEC msdb.dbo.sp_delete_job @job_name=@jobName, @delete_unused_schedule=1		
+	RETURN;
 
 ---------------------------------------------------------------------------------------------------
 /* creating the job */
